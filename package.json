@@ -1,0 +1,17 @@
+{
+  "name": "chat_departement",
+  "version": "1.0.0",
+  "description": "Chat en temps réel pour le département",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "dependencies": {
+    "express": "^5.1.0",
+    "socket.io": "^4.8.1"
+  }
+}
