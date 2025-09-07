@@ -35,11 +35,6 @@ app.use(cookieParser());
 app.use(express.static(__dirname));
 app.use("/uploads", express.static(path.join(__dirname, "uploads")));
 
-// ----- MongoDB -----
-mongoose.connect(process.env.MONGODB_URI, { autoIndex: true })
-  .then(() => console.log("✅ MongoDB connecté"))
-  .catch(err => console.error("MongoDB error:", err));
-
 // ----- Modèles -----
 const userSchema = new mongoose.Schema({
   username: { type: String, required: true, unique: true, index: true },
@@ -57,7 +52,7 @@ const messageSchema = new mongoose.Schema({
   type:     { type: String, enum: ["text","image","file"], default: "text" },
   fileUrl:  { type: String, default: null },
   fileName: { type: String, default: null },
-  reactions:{ type: Map, of: Number, default: {} }, // e.g. { "👍": 3 }
+  reactions:{ type: Map, of: Number, default: {} },
   createdAt:{ type: Date, default: Date.now }
 });
 
@@ -125,7 +120,7 @@ app.get("/api/me", authMiddleware, async (req, res) => {
   res.json({ username: user.username, filiere: user.filiere, niveau: user.niveau });
 });
 
-// ----- Upload fichiers (images/PDF) -----
+// ----- Upload fichiers -----
 const MAX_MB = parseInt(process.env.MAX_UPLOAD_MB || "10", 10);
 const storage = multer.diskStorage({
   destination: (_req, _file, cb) => cb(null, path.join(__dirname, "uploads")),
@@ -158,28 +153,25 @@ app.get("/", (_req, res) => {
   res.sendFile(path.join(__dirname, "index.html"));
 });
 
-// ----- Socket.IO avec JWT depuis cookie -----
-const onlineUsers = new Map(); // socket.id -> username
-const lastMessageTime = new Map(); // anti-spam
+// ----- Socket.IO -----
+const onlineUsers = new Map();
+const lastMessageTime = new Map();
 
 io.use((socket, next) => {
-  // Récupérer le token depuis les cookies de l’upgrade request
   try {
     const cookie = socket.request.headers.cookie || "";
     const match = cookie.split(";").map(s => s.trim()).find(s => s.startsWith("token="));
-    if (!match) return next(); // autorise lecture publique (avant login)
+    if (!match) return next();
     const token = match.split("=")[1];
     const payload = jwt.verify(token, JWT_SECRET);
     socket.user = { id: payload.id, username: payload.username };
     next();
   } catch (e) {
-    // pas bloquant pour rejoindre la page avant login
     next();
   }
 });
 
 io.on("connection", (socket) => {
-  // présence
   if (socket.user?.username) {
     onlineUsers.set(socket.id, socket.user.username);
   }
@@ -187,17 +179,13 @@ io.on("connection", (socket) => {
   socket.on("joinRoom", async ({ username, room }) => {
     socket.join(room);
     socket.currentRoom = room;
-
-    // Charger les 50 derniers messages du salon
     const history = await Message.find({ room }).sort({ createdAt: -1 }).limit(50).lean();
     socket.emit("history", history.reverse());
-
     socket.to(room).emit("notification", `${xss(username)} a rejoint le salon`);
     broadcastUserList(room);
   });
 
   socket.on("message", async (data) => {
-    // anti-spam 2s
     const now = Date.now();
     const last = lastMessageTime.get(socket.id) || 0;
     if (now - last < 2000) {
@@ -207,17 +195,13 @@ io.on("connection", (socket) => {
     lastMessageTime.set(socket.id, now);
 
     const cleanText = data.text ? xss(data.text) : "";
-    const type = data.type || "text";
-    const fileUrl = data.fileUrl || null;
-    const fileName = data.fileName || null;
-
     const doc = await Message.create({
       room: data.room,
       user: data.user,
       text: cleanText,
-      type,
-      fileUrl,
-      fileName
+      type: data.type || "text",
+      fileUrl: data.fileUrl || null,
+      fileName: data.fileName || null
     });
 
     io.to(data.room).emit("message", {
@@ -265,7 +249,12 @@ io.on("connection", (socket) => {
   }
 });
 
+// ----- Lancement du serveur + MongoDB -----
 const PORT = process.env.PORT || 3000;
 server.listen(PORT, () => {
   console.log("✅ Serveur lancé sur http://localhost:" + PORT);
 });
+
+mongoose.connect(process.env.MONGODB_URI, { autoIndex: true })
+  .then(() => console.log("✅ MongoDB connecté"))
+  .catch(err => console.error("❌ Erreur MongoDB :", err));
