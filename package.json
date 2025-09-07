@@ -1,18 +1,16 @@
 {
   "name": "chat_departement",
   "version": "1.0.0",
-  "description": "Application de chat par département",
   "main": "server.js",
-  "type": "module",
+  "type": "commonjs",
   "scripts": {
-    "start": "node server.js",
-    "dev": "node --watch server.js"
+    "start": "node server.js"
   },
   "dependencies": {
     "bcrypt": "^5.1.1",
     "cookie-parser": "^1.4.6",
     "dotenv": "^16.4.5",
-    "express": "^4.19.2",
+    "express": "^5.1.0",
     "express-rate-limit": "^7.3.1",
     "jsonwebtoken": "^9.0.2",
     "mongoose": "^8.6.0",
@@ -20,12 +18,5 @@
     "socket.io": "^4.8.1",
     "uuid": "^9.0.1",
     "xss": "^1.0.15"
-  },
-  "keywords": [
-    "chat",
-    "socket.io",
-    "express"
-  ],
-  "author": "Votre Nom",
-  "license": "ISC"
+  }
 }
