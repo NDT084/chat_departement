@@ -1,257 +1,343 @@
 <!DOCTYPE html>
 <html lang="fr">
 <head>
-    <meta charset="UTF-8">
-    <title>Chat Département</title>
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <script src="/socket.io/socket.io.js"></script>
-    <style>
-        /* Styles CSS inchangés pour le moment, le CSS pour les nouvelles fonctionnalités sera ajouté plus tard */
-        /* ... (Gardez tous vos styles existants) ... */
-
-        /* Nouveaux styles pour le mode nuit */
-        body.dark-mode {
-            --primary: #04978c;
-            --secondary: #00796B;
-            --light: #37464F;
-            --bg: #111B21;
-            --white: #1F2C34;
-            --gray: #2A3942;
-            color: #E9EDEF;
-        }
-
-        body.dark-mode #rooms h3 {
-            border-bottom: 1px solid rgba(255, 255, 255, 0.1);
-        }
-
-        body.dark-mode #rooms button:hover {
-            background: #00695C;
-        }
-
-        body.dark-mode #sidebar {
-            border-left: 1px solid #444;
-        }
-
-        body.dark-mode .other {
-            background: var(--gray);
-            color: white;
-        }
-
-        body.dark-mode .me {
-            background: #005C4B;
-            color: white;
-        }
-
-        body.dark-mode #form {
-            background: var(--white);
-            border-top: 1px solid #444;
-        }
-
-        body.dark-mode #messageInput {
-            background: var(--white);
-            color: #E9EDEF;
-        }
-
-        /* Nouveaux styles pour le bouton du mode nuit */
-        .theme-toggle {
-            position: absolute;
-            top: 10px;
-            right: 10px;
-            background: transparent;
-            border: none;
-            font-size: 24px;
-            cursor: pointer;
-            z-index: 1000;
-        }
-        
-        /* Styles pour l'envoi de fichiers */
-        #form button.file-upload {
-            padding: 15px;
-            background: #128C7E;
-            color: white;
-            border: none;
-            cursor: pointer;
-            transition: background 0.3s;
-        }
-        
-        #form button.file-upload:hover {
-            background: #075E54;
-        }
-
-        .file-message {
-            max-width: 50%;
-        }
-
-        .file-message img {
-            max-width: 100%;
-            height: auto;
-            border-radius: 8px;
-            margin-top: 5px;
-        }
-
-        .file-message a {
-            color: var(--primary);
-            text-decoration: none;
-            word-break: break-all;
-        }
-    </style>
-</head>
-
-<body>
-    <button id="theme-toggle" class="theme-toggle">🌙</button>
-    <div id="container">
-        <div id="main">
-            <div id="header">Bienvenue 👋</div>
-            <div id="chat-box"></div>
-            <div id="form">
-                <input type="file" id="fileInput" accept="image/*, .pdf" style="display: none;">
-                <button class="file-upload" onclick="document.getElementById('fileInput').click()">📎</button>
-
-                <input id="messageInput" autocomplete="off" placeholder="Écris ton message..." />
-                <button class="send">Envoyer</button>
-            </div>
-        </div>
-        
-        <div id="sidebar">
-            <h3>En ligne</h3>
-            <ul id="userList"></ul>
-        </div>
-    </div>
-    
-    <div id="login">
-        </div>
-    
-    <script>
-       const socket = io();
-let username = "";
-let currentRoom = "";
-
-// 1. Gestion du mode nuit/jour
-const themeToggle = document.getElementById("theme-toggle");
-themeToggle.addEventListener("click", () => {
-    document.body.classList.toggle("dark-mode");
-    const isDarkMode = document.body.classList.contains("dark-mode");
-    themeToggle.textContent = isDarkMode ? "☀️" : "🌙";
-    localStorage.setItem("theme", isDarkMode ? "dark" : "light");
-});
-
-// Charger la préférence de l'utilisateur
-if (localStorage.getItem("theme") === "dark") {
-    document.body.classList.add("dark-mode");
-    themeToggle.textContent = "☀️";
-}
-
-// 2. Fonctions existantes
-function setUsername() {
-    username = document.getElementById("username").value.trim();
-    if (username) {
-        document.getElementById("login").style.display = "none";
+  <meta charset="UTF-8">
+  <title>Chat Département</title>
+  <script src="/socket.io/socket.io.js"></script>
+  <style>
+    :root {
+      --primary: #128C7E;
+      --secondary: #075E54;
+      --light: #DCF8C6;
+      --bg: #ece5dd;
+      --white: #fff;
+      --gray: #f5f5f5;
     }
-}
 
-function joinRoom(room) {
-    if (!username) {
+    body {
+      margin: 0;
+      padding: 0;
+      font-family: "Segoe UI", Tahoma, Geneva, Verdana, sans-serif;
+      height: 100vh;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      background: var(--bg);
+    }
+
+    #container {
+      display: flex;
+      width: 1100px;
+      height: 650px;
+      background: var(--white);
+      border-radius: 12px;
+      overflow: hidden;
+      box-shadow: 0 8px 20px rgba(0,0,0,0.15);
+    }
+
+    /* Sidebar gauche (salons) */
+    #rooms {
+      width: 220px;
+      background: var(--secondary);
+      color: white;
+      display: flex;
+      flex-direction: column;
+    }
+
+    #rooms h3 {
+      text-align: center;
+      padding: 20px;
+      margin: 0;
+      font-size: 18px;
+      border-bottom: 1px solid rgba(255,255,255,0.2);
+    }
+
+    #rooms button {
+      background: transparent;
+      color: white;
+      border: none;
+      padding: 15px;
+      text-align: left;
+      cursor: pointer;
+      transition: background 0.3s, padding-left 0.3s;
+      font-size: 15px;
+    }
+
+    #rooms button:hover {
+      background: #0b806a;
+      padding-left: 25px;
+    }
+
+    /* Zone principale */
+    #main {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      background: var(--bg);
+    }
+
+    #header {
+      background: var(--primary);
+      color: white;
+      padding: 15px;
+      font-weight: bold;
+      text-align: center;
+      font-size: 18px;
+      letter-spacing: 1px;
+    }
+
+    #chat-box {
+      flex: 1;
+      padding: 15px;
+      overflow-y: auto;
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+    }
+
+    /* Messages */
+    .message {
+      display: inline-block;
+      padding: 10px 14px;
+      border-radius: 10px;
+      max-width: 70%;
+      word-wrap: break-word;
+      font-size: 14px;
+      position: relative;
+      box-shadow: 0 2px 5px rgba(0,0,0,0.1);
+      animation: fadeIn 0.3s ease;
+    }
+
+    .me {
+      background: var(--light);
+      align-self: flex-end;
+      border-bottom-right-radius: 0;
+    }
+
+    .other {
+      background: var(--white);
+      align-self: flex-start;
+      border-bottom-left-radius: 0;
+    }
+
+    .time {
+      font-size: 11px;
+      color: gray;
+      margin-left: 8px;
+    }
+
+    .notification {
+      text-align: center;
+      font-size: 13px;
+      color: gray;
+      margin: 5px 0;
+      font-style: italic;
+    }
+
+    /* Formulaire d’envoi */
+    #form {
+      display: flex;
+      border-top: 1px solid #ccc;
+      background: var(--white);
+    }
+
+    #messageInput {
+      flex: 1;
+      border: none;
+      padding: 15px;
+      font-size: 14px;
+      outline: none;
+    }
+
+    button.send {
+      padding: 15px 20px;
+      border: none;
+      background: var(--secondary);
+      color: white;
+      cursor: pointer;
+      transition: background 0.3s;
+    }
+
+    button.send:hover {
+      background: var(--primary);
+    }
+
+    /* Sidebar droite (utilisateurs) */
+    #sidebar {
+      width: 220px;
+      border-left: 1px solid #ccc;
+      background: var(--gray);
+      padding: 10px;
+      display: flex;
+      flex-direction: column;
+    }
+
+    #sidebar h3 {
+      margin-top: 0;
+      margin-bottom: 10px;
+      font-size: 16px;
+      text-align: center;
+    }
+
+    #userList {
+      list-style: none;
+      padding: 0;
+      margin: 0;
+    }
+
+    #userList li {
+      display: flex;
+      align-items: center;
+      padding: 8px;
+      border-radius: 5px;
+      transition: background 0.3s;
+      cursor: default;
+    }
+
+    #userList li:hover {
+      background: #e0e0e0;
+    }
+
+    /* Avatar rond avec initiales */
+    .avatar {
+      width: 30px;
+      height: 30px;
+      border-radius: 50%;
+      background: var(--primary);
+      color: white;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      margin-right: 10px;
+      font-weight: bold;
+      font-size: 14px;
+    }
+
+    /* Login */
+    #login {
+      position: absolute;
+      top: 0; left: 0;
+      width: 100%; height: 100%;
+      background: rgba(0,0,0,0.6);
+      display: flex;
+      justify-content: center;
+      align-items: center;
+    }
+
+    #loginBox {
+      background: white;
+      padding: 25px;
+      border-radius: 10px;
+      text-align: center;
+      box-shadow: 0 5px 15px rgba(0,0,0,0.3);
+    }
+
+    #loginBox h2 {
+      margin-bottom: 15px;
+    }
+
+    #loginBox input, #loginBox select {
+      padding: 10px;
+      margin-bottom: 10px;
+      width: 220px;
+      border: 1px solid #ccc;
+      border-radius: 5px;
+    }
+
+    #loginBox button {
+      padding: 10px 15px;
+      border: none;
+      background: var(--primary);
+      color: white;
+      cursor: pointer;
+      border-radius: 5px;
+    }
+
+    @keyframes fadeIn {
+      from { opacity: 0; transform: translateY(10px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+  </style>
+</head>
+<body>
+  <div id="container">
+    <!-- Sidebar gauche (salons) -->
+    <div id="rooms">
+      <h3>Salons</h3>
+      <button onclick="joinRoom('Licence 1')">Licence 1</button>
+      <button onclick="joinRoom('Licence 2')">Licence 2</button>
+      <button onclick="joinRoom('Master 1')">Master 1</button>
+      <button onclick="joinRoom('Master 2')">Master 2</button>
+    </div>
+
+    <!-- Zone principale -->
+    <div id="main">
+      <div id="header">Bienvenue 👋</div>
+      <div id="chat-box"></div>
+      <div id="form">
+        <input id="messageInput" autocomplete="off" placeholder="Écris ton message..." />
+        <button class="send" onclick="sendMessage()">Envoyer</button>
+      </div>
+    </div>
+
+    <!-- Sidebar droite (utilisateurs en ligne) -->
+    <div id="sidebar">
+      <h3>En ligne</h3>
+      <ul id="userList"></ul>
+    </div>
+  </div>
+
+  <!-- Login -->
+  <div id="login">
+    <div id="loginBox">
+      <h2>Bienvenue 🚀</h2>
+      <input id="username" placeholder="Votre pseudo..." />
+      <button onclick="setUsername()">Entrer</button>
+    </div>
+  </div>
+
+  <script>
+    const socket = io();
+    let username = "";
+    let currentRoom = "";
+
+    function setUsername() {
+      username = document.getElementById("username").value.trim();
+      if (username) {
+        document.getElementById("login").style.display = "none";
+      }
+    }
+
+    function joinRoom(room) {
+      if (!username) {
         alert("Entrez d'abord un pseudo !");
         return;
-    }
-    currentRoom = room;
-    document.getElementById("header").textContent = "Salon : " + room;
-    document.getElementById("chat-box").innerHTML = "";
-    socket.emit("joinRoom", { username, room });
-}
-
-// 3. Gestion de l'envoi de messages et de fichiers
-const messageInput = document.getElementById("messageInput");
-const sendButton = document.querySelector("#form .send");
-const fileInput = document.getElementById("fileInput");
-const chatBox = document.getElementById("chat-box");
-
-function sendMessage() {
-    const msg = messageInput.value.trim();
-    if (msg && currentRoom) {
-        socket.emit("message", { user: username, text: msg, room: currentRoom });
-        messageInput.value = "";
-    }
-}
-
-// Gérer l'envoi avec la touche Entrée
-messageInput.addEventListener("keypress", (e) => {
-    if (e.key === "Enter") {
-        sendMessage();
-    }
-});
-sendButton.addEventListener("click", sendMessage);
-
-
-fileInput.addEventListener("change", (e) => {
-    const file = e.target.files[0];
-    if (file && currentRoom) {
-        const reader = new FileReader();
-        reader.onload = (event) => {
-            const fileData = event.target.result;
-            const fileName = file.name;
-            const fileType = file.type;
-
-            socket.emit("file-upload", {
-                user: username,
-                room: currentRoom,
-                fileName: fileName,
-                fileData: fileData,
-                fileType: fileType
-            });
-        };
-        reader.readAsDataURL(file);
-    }
-});
-
-// 4. Réception des messages et fichiers
-socket.on("message", (data) => {
-    const div = document.createElement("div");
-    div.className = `message ${data.user === username ? "me" : "other"}`;
-
-    if (data.fileType) {
-        // C'est un fichier
-        if (data.fileType.startsWith("image/")) {
-            div.innerHTML = `
-                <div class="file-message">
-                    <strong>${data.user}</strong>: <br>
-                    <img src="${data.fileData}" alt="${data.fileName}">
-                    <span class="time">${data.time}</span>
-                </div>
-            `;
-        } else if (data.fileType === "application/pdf") {
-            div.innerHTML = `
-                <div class="file-message">
-                    <strong>${data.user}</strong>: <br>
-                    <a href="${data.fileData}" download="${data.fileName}">
-                        <img src="https://img.icons8.com/color/48/000000/pdf.png" alt="PDF icon" style="width: 30px;">
-                        ${data.fileName}
-                    </a>
-                    <span class="time">${data.time}</span>
-                </div>
-            `;
-        }
-    } else {
-        // C'est un message texte
-        div.innerHTML = `<strong>${data.user}</strong>: ${data.text} <span class="time">${data.time}</span>`;
+      }
+      currentRoom = room;
+      document.getElementById("header").textContent = "Salon : " + room;
+      document.getElementById("chat-box").innerHTML = "";
+      socket.emit("joinRoom", { username, room });
     }
 
-    chatBox.appendChild(div);
-    chatBox.scrollTop = chatBox.scrollHeight;
-});
+    socket.on("message", (data) => {
+      const div = document.createElement("div");
+      div.className = "message " + (data.user === username ? "me" : "other");
+      div.innerHTML = `<strong>${data.user}</strong>: ${data.text} <span class="time">${data.time}</span>`;
+      document.getElementById("chat-box").appendChild(div);
+      document.getElementById("chat-box").scrollTop = document.getElementById("chat-box").scrollHeight;
+    });
 
+    socket.on("notification", (msg) => {
+      const div = document.createElement("div");
+      div.className = "notification";
+      div.textContent = msg;
+      document.getElementById("chat-box").appendChild(div);
+    });
 
-socket.on("notification", (msg) => {
-    const div = document.createElement("div");
-    div.className = "notification";
-    div.textContent = msg;
-    chatBox.appendChild(div);
-});
-
-socket.on("userList", (users) => {
-    const ul = document.getElementById("userList");
-    ul.innerHTML = "";
-    users.forEach(user => {
+    socket.on("userList", (users) => {
+      const ul = document.getElementById("userList");
+      ul.innerHTML = "";
+      users.forEach(user => {
         const li = document.createElement("li");
         const avatar = document.createElement("div");
         avatar.className = "avatar";
@@ -259,8 +345,17 @@ socket.on("userList", (users) => {
         li.appendChild(avatar);
         li.appendChild(document.createTextNode(user));
         ul.appendChild(li);
+      });
     });
-});
-    </script>
+
+    function sendMessage() {
+      const input = document.getElementById("messageInput");
+      const msg = input.value.trim();
+      if (msg && currentRoom) {
+        socket.emit("message", { user: username, text: msg });
+        input.value = "";
+      }
+    }
+  </script>
 </body>
 </html>
