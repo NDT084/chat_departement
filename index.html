@@ -1,416 +1,402 @@
 <!DOCTYPE html>
 <html lang="fr">
-
 <head>
-    <meta charset="UTF-8">
-    <title>Chat Département</title>
-    <script src="/socket.io/socket.io.js"></script>
-    <style>
-        :root {
-            --primary: #128C7E;
-            --secondary: #075E54;
-            --light: #DCF8C6;
-            --bg: #ece5dd;
-            --white: #fff;
-            --gray: #f5f5f5;
-        }
+  <meta charset="UTF-8" />
+  <title>Chat Département</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <script src="/socket.io/socket.io.js"></script>
+  <style>
+    :root {
+      --primary: #128C7E;
+      --secondary: #075E54;
+      --light: #DCF8C6;
+      --bg: #ece5dd;
+      --white: #fff;
+      --gray: #f5f5f5;
+      --text: #222;
+    }
+    [data-theme="dark"] {
+      --primary: #0f766e;
+      --secondary: #0b5a52;
+      --light: #134e4a;
+      --bg: #0f172a;
+      --white: #0b1220;
+      --gray: #111827;
+      --text: #e5e7eb;
+    }
 
-        body {
-            margin: 0;
-            padding: 0;
-            font-family: "Segoe UI", Tahoma, Geneva, Verdana, sans-serif;
-            height: 100vh;
-            display: flex;
-            justify-content: center;
-            align-items: center;
-            background: var(--bg);
-        }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: "Segoe UI", Tahoma, Geneva, Verdana, sans-serif;
+      height: 100vh;
+      display: flex;
+      justify-content: center;
+      align-items: stretch;
+      background: var(--bg);
+      color: var(--text);
+    }
+    #container { display: flex; width: 100%; height: 100%; background: var(--white); }
 
-        #container {
-            display: flex;
-            width: 100%;
-            height: 100%;
-            background: var(--white);
-            overflow: hidden;
-        }
+    /* Sidebars */
+    #rooms {
+      width: 260px; background: var(--secondary); color: white; display: flex; flex-direction: column; overflow-y: auto;
+    }
+    #rooms h3 { text-align: center; padding: 12px; margin: 0; border-bottom: 1px solid rgba(255,255,255,0.2); }
+    #rooms button {
+      background: transparent; color: white; border: none; padding: 12px; text-align: left; cursor: pointer; font-size: 14px;
+      transition: background 0.2s, padding-left 0.2s;
+    }
+    #rooms button:hover { background: #0b806a; padding-left: 24px; }
 
-        /* Sidebar gauche (salons) */
-        #rooms {
-            width: 250px;
-            background: var(--secondary);
-            color: white;
-            display: flex;
-            flex-direction: column;
-            overflow-y: auto;
-        }
+    #sidebar {
+      width: 260px; border-left: 1px solid #ccc; background: var(--gray); padding: 10px; display: flex; flex-direction: column; color: var(--text);
+    }
+    #sidebar h3 { text-align: center; margin: 6px 0 10px; }
+    #userList { list-style: none; padding: 0; margin: 0; }
+    #userList li { display: flex; align-items: center; padding: 8px; border-radius: 6px; }
+    .avatar { width: 30px; height: 30px; border-radius: 50%; background: var(--primary); color: white; display: flex; align-items: center; justify-content: center; margin-right: 8px; }
 
-        #rooms h3 {
-            text-align: center;
-            padding: 10px;
-            margin: 0;
-            font-size: 16px;
-            border-bottom: 1px solid rgba(255, 255, 255, 0.2);
-        }
+    /* Main */
+    #main { flex: 1; display: flex; flex-direction: column; background: var(--bg); }
+    #header {
+      background: var(--primary); color: white; padding: 12px 16px; display: flex; align-items: center; justify-content: space-between;
+    }
+    #header .title { font-weight: bold; }
+    #header .actions { display: flex; gap: 8px; }
+    .btn {
+      border: none; padding: 8px 12px; border-radius: 8px; cursor: pointer;
+      background: var(--secondary); color: #fff;
+    }
+    .btn.secondary { background: #334155; }
+    .btn:hover { opacity: 0.9; }
 
-        #rooms button {
-            background: transparent;
-            color: white;
-            border: none;
-            padding: 12px;
-            text-align: left;
-            cursor: pointer;
-            transition: background 0.3s, padding-left 0.3s;
-            font-size: 14px;
-        }
+    #chat-box {
+      flex: 1; padding: 14px; overflow-y: auto; display: flex; flex-direction: column; gap: 10px;
+    }
+    .message {
+      display: inline-block; padding: 10px 14px; border-radius: 10px; max-width: 78%; word-wrap: break-word; font-size: 14px; animation: fadeIn 0.2s ease;
+      background: var(--white); color: var(--text); border: 1px solid rgba(0,0,0,0.04);
+    }
+    .me { background: var(--light); align-self: flex-end; border-bottom-right-radius: 0; }
+    .other { align-self: flex-start; border-bottom-left-radius: 0; }
+    .meta { font-size: 11px; opacity: 0.7; margin-top: 4px; }
+    .actions-row { display: flex; align-items: center; gap: 8px; margin-top: 6px; }
+    .react { cursor: pointer; font-size: 18px; }
 
-        #rooms button:hover {
-            background: #0b806a;
-            padding-left: 25px;
-        }
+    .notification { text-align: center; font-size: 13px; opacity: 0.8; }
 
-        /* Zone principale */
-        #main {
-            flex: 1;
-            display: flex;
-            flex-direction: column;
-            background: var(--bg);
-        }
+    #form { display: flex; gap: 8px; border-top: 1px solid #ccc; background: var(--white); padding: 8px; }
+    #messageInput { flex: 1; padding: 12px; border-radius: 8px; border: 1px solid #cbd5e1; background: var(--white); color: var(--text); }
+    .send { padding: 12px 16px; border-radius: 8px; border: none; background: var(--secondary); color: white; cursor: pointer; }
+    .file { background: #475569; }
 
-        #header {
-            background: var(--primary);
-            color: white;
-            padding: 15px;
-            font-weight: bold;
-            text-align: center;
-            font-size: 18px;
-            letter-spacing: 1px;
-        }
+    /* Login / Register modal */
+    #login { position: fixed; inset: 0; background: rgba(0,0,0,0.6); display: flex; align-items: center; justify-content: center; }
+    #loginBox { background: var(--white); color: var(--text); padding: 22px; border-radius: 12px; min-width: 300px; }
+    #loginBox h2 { margin: 0 0 12px; }
+    #loginBox input, #loginBox select {
+      width: 100%; padding: 10px; margin-bottom: 10px; border-radius: 8px; border: 1px solid #cbd5e1; background: var(--white); color: var(--text);
+    }
 
-        #chat-box {
-            flex: 1;
-            padding: 15px;
-            overflow-y: auto;
-            display: flex;
-            flex-direction: column;
-            gap: 10px;
-        }
+    /* Responsive */
+    @media (max-width: 768px) {
+      #rooms, #sidebar { display: none; }
+      #container { flex-direction: column; }
+      #form { position: sticky; bottom: 0; }
+      #chat-box { padding-bottom: 8px; }
+    }
 
-        /* Messages */
-        .message {
-            display: inline-block;
-            padding: 10px 14px;
-            border-radius: 10px;
-            max-width: 70%;
-            word-wrap: break-word;
-            font-size: 14px;
-            position: relative;
-            box-shadow: 0 2px 5px rgba(0, 0, 0, 0.1);
-            animation: fadeIn 0.3s ease;
-        }
-
-        .me {
-            background: var(--light);
-            align-self: flex-end;
-            border-bottom-right-radius: 0;
-        }
-
-        .other {
-            background: var(--white);
-            align-self: flex-start;
-            border-bottom-left-radius: 0;
-        }
-
-        .time {
-            font-size: 11px;
-            color: gray;
-            margin-left: 8px;
-        }
-
-        .notification {
-            text-align: center;
-            font-size: 13px;
-            color: gray;
-            margin: 5px 0;
-            font-style: italic;
-        }
-
-        /* Formulaire d’envoi */
-        #form {
-            display: flex;
-            border-top: 1px solid #ccc;
-            background: var(--white);
-        }
-
-        #messageInput {
-            flex: 1;
-            border: none;
-            padding: 15px;
-            font-size: 14px;
-            outline: none;
-        }
-
-        button.send {
-            padding: 15px 20px;
-            border: none;
-            background: var(--secondary);
-            color: white;
-            cursor: pointer;
-            transition: background 0.3s;
-        }
-
-        button.send:hover {
-            background: var(--primary);
-        }
-
-        /* Sidebar droite (utilisateurs) */
-        #sidebar {
-            width: 250px;
-            border-left: 1px solid #ccc;
-            background: var(--gray);
-            padding: 10px;
-            display: flex;
-            flex-direction: column;
-        }
-
-        #sidebar h3 {
-            margin-top: 0;
-            margin-bottom: 10px;
-            font-size: 16px;
-            text-align: center;
-        }
-
-        #userList {
-            list-style: none;
-            padding: 0;
-            margin: 0;
-        }
-
-        #userList li {
-            display: flex;
-            align-items: center;
-            padding: 8px;
-            border-radius: 5px;
-            transition: background 0.3s;
-        }
-
-        #userList li:hover {
-            background: #e0e0e0;
-        }
-
-        .avatar {
-            width: 30px;
-            height: 30px;
-            border-radius: 50%;
-            background: var(--primary);
-            color: white;
-            display: flex;
-            justify-content: center;
-            align-items: center;
-            margin-right: 10px;
-            font-weight: bold;
-            font-size: 14px;
-        }
-
-        /* Login */
-        #login {
-            position: absolute;
-            top: 0;
-            left: 0;
-            width: 100%;
-            height: 100%;
-            background: rgba(0, 0, 0, 0.6);
-            display: flex;
-            justify-content: center;
-            align-items: center;
-        }
-
-        #loginBox {
-            background: white;
-            padding: 25px;
-            border-radius: 10px;
-            text-align: center;
-            box-shadow: 0 5px 15px rgba(0, 0, 0, 0.3);
-        }
-
-        #loginBox h2 {
-            margin-bottom: 15px;
-        }
-
-        #loginBox input {
-            padding: 10px;
-            margin-bottom: 10px;
-            width: 220px;
-            border: 1px solid #ccc;
-            border-radius: 5px;
-        }
-
-        #loginBox button {
-            padding: 10px 15px;
-            border: none;
-            background: var(--primary);
-            color: white;
-            cursor: pointer;
-            border-radius: 5px;
-        }
-
-        /* Responsive pour mobiles */
-        @media (max-width: 768px) {
-            #rooms,
-            #sidebar {
-                display: none; /* cache les barres latérales */
-            }
-
-            #container {
-                flex-direction: column;
-            }
-
-            #main {
-                width: 100%;
-                height: 100%;
-            }
-
-            #form {
-                position: fixed;
-                bottom: 0;
-                left: 0;
-                width: 100%;
-            }
-
-            #chat-box {
-                margin-bottom: 60px; /* laisse la place pour le champ en bas */
-            }
-        }
-
-        @keyframes fadeIn {
-            from {
-                opacity: 0;
-                transform: translateY(10px);
-            }
-            to {
-                opacity: 1;
-                transform: translateY(0);
-            }
-        }
-    </style>
+    @keyframes fadeIn { from { opacity:0; transform: translateY(6px);} to {opacity:1; transform: none;} }
+  </style>
 </head>
-
 <body>
-    <div id="container">
-        <!-- Sidebar gauche (salons avec années et filières) -->
-        <div id="rooms">
-            <h3>Licence 1</h3>
-            <button onclick="joinRoom('L1 - Cybersécurité (CS)')">Cybersécurité (CS)</button>
-            <button onclick="joinRoom('L1 - Systèmes Embarqués & IoT (SEMI)')">SEMI</button>
-            <button onclick="joinRoom('L1 - Réseau Télécommunication (RT)')">RT</button>
+  <div id="container">
+    <!-- Salons -->
+    <div id="rooms">
+      <h3>Licence 1</h3>
+      <button onclick="joinRoom('L1 - Cybersécurité (CS)')">CS</button>
+      <button onclick="joinRoom('L1 - Systèmes Embarqués & IoT (SEMI)')">SEMI</button>
+      <button onclick="joinRoom('L1 - Réseau Télécommunication (RT)')">RT</button>
 
-            <h3>Licence 2</h3>
-            <button onclick="joinRoom('L2 - Cybersécurité (CS)')">Cybersécurité (CS)</button>
-            <button onclick="joinRoom('L2 - Systèmes Embarqués & IoT (SEMI)')">SEMI</button>
-            <button onclick="joinRoom('L2 - Réseau Télécommunication (RT)')">RT</button>
+      <h3>Licence 2</h3>
+      <button onclick="joinRoom('L2 - Cybersécurité (CS)')">CS</button>
+      <button onclick="joinRoom('L2 - Systèmes Embarqués & IoT (SEMI)')">SEMI</button>
+      <button onclick="joinRoom('L2 - Réseau Télécommunication (RT)')">RT</button>
 
-            <h3>Licence 3</h3>
-            <button onclick="joinRoom('L3 - Cybersécurité (CS)')">Cybersécurité (CS)</button>
-            <button onclick="joinRoom('L3 - Systèmes Embarqués & IoT (SEMI)')">SEMI</button>
-            <button onclick="joinRoom('L3 - Réseau Télécommunication (RT)')">RT</button>
+      <h3>Licence 3</h3>
+      <button onclick="joinRoom('L3 - Cybersécurité (CS)')">CS</button>
+      <button onclick="joinRoom('L3 - Systèmes Embarqués & IoT (SEMI)')">SEMI</button>
+      <button onclick="joinRoom('L3 - Réseau Télécommunication (RT)')">RT</button>
 
-            <h3>Master 1</h3>
-            <button onclick="joinRoom('M1 - Cybersécurité (CS)')">Cybersécurité (CS)</button>
-            <button onclick="joinRoom('M1 - Systèmes Embarqués & IoT (SEMI)')">SEMI</button>
-            <button onclick="joinRoom('M1 - Réseau Télécommunication (RT)')">RT</button>
+      <h3>Master 1</h3>
+      <button onclick="joinRoom('M1 - Cybersécurité (CS)')">CS</button>
+      <button onclick="joinRoom('M1 - Systèmes Embarqués & IoT (SEMI)')">SEMI</button>
+      <button onclick="joinRoom('M1 - Réseau Télécommunication (RT)')">RT</button>
 
-            <h3>Master 2</h3>
-            <button onclick="joinRoom('M2 - Cybersécurité (CS)')">Cybersécurité (CS)</button>
-            <button onclick="joinRoom('M2 - Systèmes Embarqués & IoT (SEMI)')">SEMI</button>
-            <button onclick="joinRoom('M2 - Réseau Télécommunication (RT)')">RT</button>
-        </div>
-
-        <!-- Zone principale -->
-        <div id="main">
-            <div id="header">Bienvenue 👋</div>
-            <div id="chat-box"></div>
-            <div id="form">
-                <input id="messageInput" autocomplete="off" placeholder="Écris ton message..." />
-                <button class="send" onclick="sendMessage()">Envoyer</button>
-            </div>
-        </div>
-
-        <!-- Sidebar droite (utilisateurs en ligne) -->
-        <div id="sidebar">
-            <h3>En ligne</h3>
-            <ul id="userList"></ul>
-        </div>
+      <h3>Master 2</h3>
+      <button onclick="joinRoom('M2 - Cybersécurité (CS)')">CS</button>
+      <button onclick="joinRoom('M2 - Systèmes Embarqués & IoT (SEMI)')">SEMI</button>
+      <button onclick="joinRoom('M2 - Réseau Télécommunication (RT)')">RT</button>
     </div>
 
-    <!-- Login -->
-    <div id="login">
-        <div id="loginBox">
-            <h2>Bienvenue 🚀</h2>
-            <input id="username" placeholder="Votre pseudo..." />
-            <button onclick="setUsername()">Entrer</button>
+    <!-- Main -->
+    <div id="main">
+      <div id="header">
+        <div class="title" id="headerTitle">Bienvenue 👋</div>
+        <div class="actions">
+          <button class="btn secondary" onclick="toggleTheme()">🌓 Thème</button>
+          <button class="btn" onclick="logout()">Se déconnecter</button>
         </div>
+      </div>
+
+      <div id="chat-box"></div>
+
+      <div id="form">
+        <input id="messageInput" autocomplete="off" placeholder="Écris ton message..." />
+        <input type="file" id="fileInput" style="display:none" />
+        <button class="send file" onclick="pickFile()">📎</button>
+        <button class="send" onclick="sendMessage()">Envoyer</button>
+      </div>
     </div>
 
-    <script>
-        const socket = io();
-        let username = "";
-        let currentRoom = "";
+    <!-- Utilisateurs -->
+    <div id="sidebar">
+      <h3>En ligne</h3>
+      <ul id="userList"></ul>
+    </div>
+  </div>
 
-        function setUsername() {
-            username = document.getElementById("username").value.trim();
-            if (username) {
-                document.getElementById("login").style.display = "none";
-            }
+  <!-- Login / Register -->
+  <div id="login">
+    <div id="loginBox">
+      <h2>Connexion / Inscription 🚀</h2>
+      <input id="l_username" placeholder="Pseudo (unique)" />
+      <input id="l_email" placeholder="Email (optionnel)" />
+      <input id="l_password" type="password" placeholder="Mot de passe" />
+      <div style="display:flex; gap:8px">
+        <select id="l_filiere">
+          <option value="">Filière (optionnel)</option>
+          <option value="CS">Cybersécurité (CS)</option>
+          <option value="SEMI">Systèmes Embarqués & IoT (SEMI)</option>
+          <option value="RT">Réseau Télécommunication (RT)</option>
+        </select>
+        <select id="l_niveau">
+          <option value="">Niveau</option>
+          <option value="L1">L1</option>
+          <option value="L2">L2</option>
+          <option value="L3">L3</option>
+          <option value="M1">M1</option>
+          <option value="M2">M2</option>
+        </select>
+      </div>
+      <div style="display:flex; gap:8px; margin-top:8px">
+        <button class="btn" onclick="register()">S’inscrire</button>
+        <button class="btn secondary" onclick="login()">Se connecter</button>
+      </div>
+      <div id="authError" style="color:#ef4444; margin-top:8px;"></div>
+    </div>
+  </div>
+
+  <audio id="ding">
+    <source src="data:audio/mp3;base64,//uQZAAAAAAAAAAAAAAAAAAAA..." type="audio/mp3">
+  </audio>
+
+  <script>
+    const socket = io();
+    let currentUser = null;
+    let currentRoom = "";
+    const chatBox = document.getElementById("chat-box");
+    const ding = document.getElementById("ding");
+
+    // Thème
+    function toggleTheme() {
+      const cur = document.documentElement.getAttribute("data-theme");
+      document.documentElement.setAttribute("data-theme", cur === "dark" ? "light" : "dark");
+    }
+
+    // Auth
+    async function register() {
+      const body = collectAuthData();
+      const r = await fetch("/api/register", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body)
+      });
+      const json = await r.json();
+      if (!r.ok) return showAuthError(json.error || "Erreur");
+      currentUser = json.username;
+      document.getElementById("login").style.display = "none";
+    }
+
+    async function login() {
+      const username = v("l_username");
+      const password = v("l_password");
+      const r = await fetch("/api/login", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ username, password })
+      });
+      const json = await r.json();
+      if (!r.ok) return showAuthError(json.error || "Erreur");
+      currentUser = json.username;
+      document.getElementById("login").style.display = "none";
+    }
+
+    function logout() {
+      // simple: on efface le cookie côté navigateur en changeant de chemin (ici, démonstratif)
+      document.cookie = "token=; Max-Age=0; path=/";
+      location.reload();
+    }
+
+    function collectAuthData() {
+      return {
+        username: v("l_username"),
+        email: v("l_email"),
+        password: v("l_password"),
+        filiere: v("l_filiere") || null,
+        niveau: v("l_niveau") || null
+      };
+    }
+    function v(id) { return document.getElementById(id).value.trim(); }
+    function showAuthError(msg) {
+      document.getElementById("authError").textContent = msg;
+    }
+
+    // Méthodes chat
+    function joinRoom(room) {
+      if (!currentUser) { alert("Connecte-toi d’abord 😉"); return; }
+      currentRoom = room;
+      document.getElementById("headerTitle").textContent = "Salon : " + room;
+      chatBox.innerHTML = "";
+      socket.emit("joinRoom", { username: currentUser, room });
+    }
+
+    socket.on("history", (messages) => {
+      messages.forEach(renderMessage);
+      chatBox.scrollTop = chatBox.scrollHeight;
+    });
+
+    socket.on("message", (data) => {
+      renderMessage(data);
+      if (data.user !== currentUser) {
+        try { ding.currentTime = 0; ding.play(); } catch {}
+      }
+      chatBox.scrollTop = chatBox.scrollHeight;
+    });
+
+    socket.on("reactionUpdated", ({ messageId, emoji, count }) => {
+      const node = document.querySelector(`[data-id="${messageId}"] .reactions [data-emoji="${emoji}"]`);
+      if (node) node.textContent = `${emoji} ${count}`;
+    });
+
+    socket.on("notification", (msg) => {
+      const div = document.createElement("div");
+      div.className = "notification";
+      div.textContent = msg;
+      chatBox.appendChild(div);
+    });
+
+    socket.on("userList", (users) => {
+      const ul = document.getElementById("userList");
+      ul.innerHTML = "";
+      users.forEach(u => {
+        const li = document.createElement("li");
+        const avatar = document.createElement("div");
+        avatar.className = "avatar";
+        avatar.textContent = (u?.[0] || "?").toUpperCase();
+        li.appendChild(avatar);
+        li.appendChild(document.createTextNode(u));
+        ul.appendChild(li);
+      });
+    });
+
+    function renderMessage(m) {
+      const div = document.createElement("div");
+      div.className = "message " + (m.user === currentUser ? "me" : "other");
+      div.setAttribute("data-id", m._id || "");
+
+      let content = `<strong>${escapeHtml(m.user)}</strong><br/>`;
+      if (m.type === "image" && m.fileUrl) {
+        content += `<img src="${m.fileUrl}" alt="image" style="max-width: 260px; border-radius:8px; display:block; margin-top:6px;" />`;
+        if (m.text) content += `<div style="margin-top:6px;">${escapeHtml(m.text)}</div>`;
+      } else if (m.type === "file" && m.fileUrl) {
+        content += `<a href="${m.fileUrl}" target="_blank">📄 ${escapeHtml(m.fileName || "Fichier")}</a>`;
+        if (m.text) content += `<div style="margin-top:6px;">${escapeHtml(m.text)}</div>`;
+      } else {
+        content += `${escapeHtml(m.text || "")}`;
+      }
+      content += `<div class="meta">${fmtTime(m.createdAt)}</div>`;
+
+      const reactions = m.reactions || {};
+      const rHtml = ["👍","❤️","😂"].map(e => {
+        const count = reactions[e] || 0;
+        return `<span class="react" data-emoji="${e}" onclick="reactTo('${m._id}','${e}')">${e} ${count || ""}</span>`;
+      }).join(" ");
+
+      div.innerHTML = content + `<div class="actions-row"><span class="reactions">${rHtml}</span></div>`;
+      chatBox.appendChild(div);
+    }
+
+    function fmtTime(ts) {
+      try { return new Date(ts).toLocaleTimeString(); } catch { return ""; }
+    }
+    function escapeHtml(s) {
+      return (s || "").replace(/[&<>"']/g, c => ({ "&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;" }[c]));
+    }
+
+    async function sendMessage() {
+      if (!currentUser || !currentRoom) return;
+      const input = document.getElementById("messageInput");
+      const text = input.value.trim();
+      if (!text) return;
+      socket.emit("message", { user: currentUser, text, room: currentRoom, type: "text" });
+      input.value = "";
+    }
+
+    function pickFile() {
+      if (!currentUser || !currentRoom) { alert("Connecte-toi et rejoins un salon"); return; }
+      document.getElementById("fileInput").click();
+    }
+
+    document.getElementById("fileInput").addEventListener("change", async (e) => {
+      const file = e.target.files?.[0];
+      if (!file) return;
+      const fd = new FormData();
+      fd.append("file", file);
+      const r = await fetch("/api/upload", { method: "POST", body: fd });
+      const json = await r.json();
+      if (!r.ok) { alert(json.error || "Upload échoué"); return; }
+      // Déterminer type
+      const isImage = /\.(png|jpg|jpeg|gif|webp)$/i.test(json.name || file.name);
+      const type = isImage ? "image" : "file";
+      socket.emit("message", {
+        user: currentUser,
+        text: "",
+        room: currentRoom,
+        type,
+        fileUrl: json.url,
+        fileName: json.name
+      });
+      e.target.value = "";
+    });
+
+    function reactTo(messageId, emoji) {
+      if (!currentRoom) return;
+      socket.emit("react", { messageId, emoji, room: currentRoom });
+    }
+
+    // Au chargement, vérifier si déjà connecté
+    (async function boot() {
+      try {
+        const r = await fetch("/api/me");
+        if (r.ok) {
+          const me = await r.json();
+          currentUser = me.username;
+          document.getElementById("login").style.display = "none";
         }
-
-        function joinRoom(room) {
-            if (!username) {
-                alert("Entrez d'abord un pseudo !");
-                return;
-            }
-            currentRoom = room;
-            document.getElementById("header").textContent = "Salon : " + room;
-            document.getElementById("chat-box").innerHTML = "";
-            socket.emit("joinRoom", { username, room });
-        }
-
-        socket.on("message", (data) => {
-            const div = document.createElement("div");
-            div.className = "message " + (data.user === username ? "me" : "other");
-            div.innerHTML = `<strong>${data.user}</strong>: ${data.text} <span class="time">${data.time}</span>`;
-            document.getElementById("chat-box").appendChild(div);
-            document.getElementById("chat-box").scrollTop = document.getElementById("chat-box").scrollHeight;
-        });
-
-        socket.on("notification", (msg) => {
-            const div = document.createElement("div");
-            div.className = "notification";
-            div.textContent = msg;
-            document.getElementById("chat-box").appendChild(div);
-        });
-
-        socket.on("userList", (users) => {
-            const ul = document.getElementById("userList");
-            ul.innerHTML = "";
-            users.forEach(user => {
-                const li = document.createElement("li");
-                const avatar = document.createElement("div");
-                avatar.className = "avatar";
-                avatar.textContent = user.charAt(0).toUpperCase();
-                li.appendChild(avatar);
-                li.appendChild(document.createTextNode(user));
-                ul.appendChild(li);
-            });
-        });
-
-        function sendMessage() {
-            const input = document.getElementById("messageInput");
-            const msg = input.value.trim();
-            if (msg && currentRoom) {
-                socket.emit("message", { user: username, text: msg, room: currentRoom });
-                input.value = "";
-            }
-        }
-    </script>
+      } catch {}
+    })();
+  </script>
 </body>
-
 </html>
