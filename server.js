@@ -1,8 +1,11 @@
 // server.js
 require("dotenv").config();
 const path = require("path");
+const fs = require("fs");
 const express = require("express");
 const http = require("http");
+const cors = require("cors");
+const helmet = require("helmet");
 const { Server } = require("socket.io");
 const mongoose = require("mongoose");
 const bcrypt = require("bcrypt");
@@ -15,32 +18,50 @@ const { v4: uuidv4 } = require("uuid");
 
 const app = express();
 const server = http.createServer(app);
+
 const io = new Server(server, {
-  cors: { origin: true, credentials: true }
+  cors: {
+    origin: process.env.CLIENT_ORIGIN || true, // en prod : mettre l'URL front (ex: https://mon-site.com)
+    credentials: true
+  }
 });
 
-// ----- Sécurité API : rate limit -----
+// ----- Basic security middlewares -----
+app.use(helmet());
+app.use(express.json({ limit: "1mb" }));
+app.use(cookieParser());
+
+// ----- Rate limiter -----
 const apiLimiter = rateLimit({
   windowMs: 60 * 1000,
-  max: 100, // 100 requêtes / minute par IP
+  max: 100,
   standardHeaders: true,
   legacyHeaders: false
 });
-
 app.use(apiLimiter);
-app.use(express.json());
-app.use(cookieParser());
 
-// ----- Static -----
+// ----- CORS (si besoin côté API) -----
+if (process.env.CLIENT_ORIGIN) {
+  app.use(cors({ origin: process.env.CLIENT_ORIGIN, credentials: true }));
+} else {
+  // fallback permissive for dev
+  app.use(cors({ origin: true, credentials: true }));
+}
+
+// ----- Static files -----
+// expose current dir for index.html and /uploads for uploaded files
 app.use(express.static(__dirname));
-app.use("/uploads", express.static(path.join(__dirname, "uploads")));
+const uploadsDir = path.join(__dirname, "uploads");
+if (!fs.existsSync(uploadsDir)) fs.mkdirSync(uploadsDir, { recursive: true });
+app.use("/uploads", express.static(uploadsDir));
 
 // ----- MongoDB -----
-mongoose.connect(process.env.MONGODB_URI, { autoIndex: true })
+const MONGODB_URI = process.env.MONGODB_URI || "mongodb://localhost:27017/chatdb";
+mongoose.connect(MONGODB_URI, { autoIndex: true })
   .then(() => console.log("✅ MongoDB connecté"))
   .catch(err => console.error("MongoDB error:", err));
 
-// ----- Modèles -----
+// ----- Schemas & Models -----
 const userSchema = new mongoose.Schema({
   username: { type: String, required: true, unique: true, index: true },
   email:    { type: String },
@@ -57,7 +78,7 @@ const messageSchema = new mongoose.Schema({
   type:     { type: String, enum: ["text","image","file"], default: "text" },
   fileUrl:  { type: String, default: null },
   fileName: { type: String, default: null },
-  reactions:{ type: Map, of: Number, default: {} }, // e.g. { "👍": 3 }
+  reactions:{ type: Map, of: Number, default: {} },
   createdAt:{ type: Date, default: Date.now }
 });
 
@@ -66,11 +87,9 @@ const Message = mongoose.model("Message", messageSchema);
 
 // ----- Auth helpers -----
 const JWT_SECRET = process.env.JWT_SECRET || "dev_secret_change_me";
-
 function signToken(user) {
   return jwt.sign({ id: user._id, username: user.username }, JWT_SECRET, { expiresIn: "30d" });
 }
-
 function authMiddleware(req, res, next) {
   const token = req.cookies?.token;
   if (!token) return res.status(401).json({ error: "Unauthenticated" });
@@ -82,19 +101,36 @@ function authMiddleware(req, res, next) {
   }
 }
 
-// ----- Routes Auth -----
+// cookie options (secure only in production)
+const isProd = process.env.NODE_ENV === "production";
+const cookieOptions = {
+  httpOnly: true,
+  sameSite: "lax",
+  secure: isProd,
+  maxAge: 1000 * 60 * 60 * 24 * 30
+};
+
+// ----- Auth routes -----
 app.post("/api/register", async (req, res) => {
   try {
     const { username, email, password, filiere, niveau } = req.body;
     if (!username || !password) return res.status(400).json({ error: "username et password requis" });
-    const exists = await User.findOne({ username });
+
+    const cleanUsername = xss((username || "").trim());
+    const exists = await User.findOne({ username: cleanUsername });
     if (exists) return res.status(409).json({ error: "Ce pseudo existe déjà" });
 
     const passwordHash = await bcrypt.hash(password, 10);
-    const user = await User.create({ username, email, passwordHash, filiere: filiere || null, niveau: niveau || null });
+    const user = await User.create({
+      username: cleanUsername,
+      email: email ? xss(email) : undefined,
+      passwordHash,
+      filiere: filiere || null,
+      niveau: niveau || null
+    });
 
     const token = signToken(user);
-    res.cookie("token", token, { httpOnly: true, sameSite: "lax", secure: true, maxAge: 1000*60*60*24*30 });
+    res.cookie("token", token, cookieOptions);
     res.json({ ok: true, username: user.username });
   } catch (e) {
     console.error(e);
@@ -105,13 +141,16 @@ app.post("/api/register", async (req, res) => {
 app.post("/api/login", async (req, res) => {
   try {
     const { username, password } = req.body;
-    const user = await User.findOne({ username });
+    if (!username || !password) return res.status(400).json({ error: "username et password requis" });
+
+    const user = await User.findOne({ username: xss(username) });
     if (!user) return res.status(401).json({ error: "Identifiants invalides" });
+
     const match = await bcrypt.compare(password, user.passwordHash);
     if (!match) return res.status(401).json({ error: "Identifiants invalides" });
 
     const token = signToken(user);
-    res.cookie("token", token, { httpOnly: true, sameSite: "lax", secure: true, maxAge: 1000*60*60*24*30 });
+    res.cookie("token", token, cookieOptions);
     res.json({ ok: true, username: user.username });
   } catch (e) {
     console.error(e);
@@ -120,31 +159,49 @@ app.post("/api/login", async (req, res) => {
 });
 
 app.get("/api/me", authMiddleware, async (req, res) => {
-  const user = await User.findById(req.user.id).lean();
-  if (!user) return res.status(404).json({ error: "Not found" });
-  res.json({ username: user.username, filiere: user.filiere, niveau: user.niveau });
+  try {
+    const user = await User.findById(req.user.id).lean();
+    if (!user) return res.status(404).json({ error: "Not found" });
+    res.json({ username: user.username, filiere: user.filiere, niveau: user.niveau });
+  } catch (e) {
+    console.error(e);
+    res.status(500).json({ error: "Erreur serveur" });
+  }
 });
 
-// ----- Upload fichiers (images/PDF) -----
+// ----- Upload config (multer) -----
 const MAX_MB = parseInt(process.env.MAX_UPLOAD_MB || "10", 10);
 const storage = multer.diskStorage({
-  destination: (_req, _file, cb) => cb(null, path.join(__dirname, "uploads")),
+  destination: (_req, _file, cb) => cb(null, uploadsDir),
   filename: (_req, file, cb) => {
     const id = uuidv4();
     const ext = path.extname(file.originalname);
     cb(null, `${id}${ext}`);
   }
 });
+
+// restrict file types: images + pdf + common docs (optional)
+function fileFilter(_req, file, cb) {
+  const allowed = [
+    "image/png", "image/jpg", "image/jpeg", "image/gif", "image/webp",
+    "application/pdf",
+    "application/msword", "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    "text/plain", "application/zip"
+  ];
+  if (allowed.includes(file.mimetype)) cb(null, true);
+  else cb(new Error("Type de fichier non autorisé"), false);
+}
+
 const upload = multer({
   storage,
-  limits: { fileSize: MAX_MB * 1024 * 1024 }
+  limits: { fileSize: MAX_MB * 1024 * 1024 },
+  fileFilter
 });
 
 app.post("/api/upload", authMiddleware, upload.single("file"), async (req, res) => {
   try {
     const file = req.file;
     if (!file) return res.status(400).json({ error: "Aucun fichier" });
-
     const url = `/uploads/${file.filename}`;
     res.json({ url, name: file.originalname });
   } catch (e) {
@@ -153,88 +210,111 @@ app.post("/api/upload", authMiddleware, upload.single("file"), async (req, res) 
   }
 });
 
-// ----- Servir index.html -----
+// ----- Serve index ----- 
 app.get("/", (_req, res) => {
   res.sendFile(path.join(__dirname, "index.html"));
 });
 
-// ----- Socket.IO avec JWT depuis cookie -----
+// ----- Socket.IO -----
+// Keep track of presence and anti-spam
 const onlineUsers = new Map(); // socket.id -> username
-const lastMessageTime = new Map(); // anti-spam
+const lastMessageTime = new Map(); // socket.id -> timestamp
 
+// Socket auth from cookie (non-blocking: allow anonymous browsing)
 io.use((socket, next) => {
-  // Récupérer le token depuis les cookies de l’upgrade request
   try {
     const cookie = socket.request.headers.cookie || "";
     const match = cookie.split(";").map(s => s.trim()).find(s => s.startsWith("token="));
-    if (!match) return next(); // autorise lecture publique (avant login)
+    if (!match) return next();
     const token = match.split("=")[1];
     const payload = jwt.verify(token, JWT_SECRET);
     socket.user = { id: payload.id, username: payload.username };
-    next();
+    return next();
   } catch (e) {
-    // pas bloquant pour rejoindre la page avant login
-    next();
+    // don't block connection; treat as anonymous
+    return next();
   }
 });
 
 io.on("connection", (socket) => {
-  // présence
   if (socket.user?.username) {
     onlineUsers.set(socket.id, socket.user.username);
   }
 
+  // Helper to broadcast user list for a room
+  function broadcastUserList(room) {
+    const sids = io.sockets.adapter.rooms.get(room) || new Set();
+    const clients = Array.from(sids).map(id => {
+      const s = io.sockets.sockets.get(id);
+      return s?.user?.username || "Anonyme";
+    });
+    io.to(room).emit("userList", clients);
+  }
+
   socket.on("joinRoom", async ({ username, room }) => {
-    socket.join(room);
-    socket.currentRoom = room;
+    try {
+      const cleanRoom = xss(String(room || "Général"));
+      const cleanUser = xss(String(username || (socket.user?.username || "Anonyme")));
+      socket.join(cleanRoom);
+      socket.currentRoom = cleanRoom;
 
-    // Charger les 50 derniers messages du salon
-    const history = await Message.find({ room }).sort({ createdAt: -1 }).limit(50).lean();
-    socket.emit("history", history.reverse());
+      // last 50 messages
+      const history = await Message.find({ room: cleanRoom }).sort({ createdAt: -1 }).limit(50).lean();
+      socket.emit("history", history.reverse());
 
-    socket.to(room).emit("notification", `${xss(username)} a rejoint le salon`);
-    broadcastUserList(room);
+      socket.to(cleanRoom).emit("notification", `${cleanUser} a rejoint le salon`);
+      broadcastUserList(cleanRoom);
+    } catch (e) {
+      console.error("joinRoom error:", e);
+    }
   });
 
   socket.on("message", async (data) => {
-    // anti-spam 2s
-    const now = Date.now();
-    const last = lastMessageTime.get(socket.id) || 0;
-    if (now - last < 2000) {
-      socket.emit("notification", "⏳ Tu envoies des messages trop vite !");
-      return;
+    try {
+      // anti-spam (2s)
+      const now = Date.now();
+      const last = lastMessageTime.get(socket.id) || 0;
+      if (now - last < 2000) {
+        socket.emit("notification", "⏳ Tu envoies des messages trop vite !");
+        return;
+      }
+      lastMessageTime.set(socket.id, now);
+
+      const room = xss(String(data.room || socket.currentRoom || "Général"));
+      const user = xss(String(data.user || socket.user?.username || "Anonyme"));
+      const type = data.type || "text";
+      const fileUrl = data.fileUrl || null;
+      const fileName = data.fileName ? xss(String(data.fileName)) : null;
+      const cleanText = data.text ? xss(String(data.text)) : "";
+
+      const doc = await Message.create({
+        room,
+        user,
+        text: cleanText,
+        type,
+        fileUrl,
+        fileName
+      });
+
+      io.to(room).emit("message", {
+        _id: doc._id,
+        room: doc.room,
+        user: doc.user,
+        text: doc.text,
+        type: doc.type,
+        fileUrl: doc.fileUrl,
+        fileName: doc.fileName,
+        reactions: {},
+        createdAt: doc.createdAt
+      });
+    } catch (e) {
+      console.error("message error:", e);
     }
-    lastMessageTime.set(socket.id, now);
-
-    const cleanText = data.text ? xss(data.text) : "";
-    const type = data.type || "text";
-    const fileUrl = data.fileUrl || null;
-    const fileName = data.fileName || null;
-
-    const doc = await Message.create({
-      room: data.room,
-      user: data.user,
-      text: cleanText,
-      type,
-      fileUrl,
-      fileName
-    });
-
-    io.to(data.room).emit("message", {
-      _id: doc._id,
-      room: doc.room,
-      user: doc.user,
-      text: doc.text,
-      type: doc.type,
-      fileUrl: doc.fileUrl,
-      fileName: doc.fileName,
-      reactions: {},
-      createdAt: doc.createdAt
-    });
   });
 
   socket.on("react", async ({ messageId, emoji, room }) => {
     try {
+      if (!messageId || !emoji) return;
       const msg = await Message.findById(messageId);
       if (!msg) return;
       const current = msg.reactions.get(emoji) || 0;
@@ -242,7 +322,7 @@ io.on("connection", (socket) => {
       await msg.save();
       io.to(room).emit("reactionUpdated", { messageId, emoji, count: current + 1 });
     } catch (e) {
-      console.error(e);
+      console.error("react error:", e);
     }
   });
 
@@ -255,17 +335,10 @@ io.on("connection", (socket) => {
       broadcastUserList(room);
     }
   });
-
-  function broadcastUserList(room) {
-    const clients = Array.from(io.sockets.adapter.rooms.get(room) || []).map(id => {
-      const s = io.sockets.sockets.get(id);
-      return s?.user?.username || "Anonyme";
-    });
-    io.to(room).emit("userList", clients);
-  }
 });
 
+// ----- Launch server -----
 const PORT = process.env.PORT || 3000;
 server.listen(PORT, () => {
-  console.log("✅ Serveur lancé sur http://localhost:" + PORT);
+  console.log(`✅ Serveur lancé sur http://localhost:${PORT}`);
 });
