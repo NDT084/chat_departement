@@ -26,12 +26,12 @@ const io = new Server(server, {
   }
 });
 
-// ----- Security & middlewares -----
+// ---- Basic middlewares ----
 app.use(helmet());
 app.use(express.json({ limit: "1mb" }));
 app.use(cookieParser());
 
-// rate limiter
+// ---- Rate limiter ----
 const apiLimiter = rateLimit({
   windowMs: 60 * 1000,
   max: 100,
@@ -40,26 +40,29 @@ const apiLimiter = rateLimit({
 });
 app.use(apiLimiter);
 
-// CORS
-if (process.env.CLIENT_ORIGIN) {
-  app.use(cors({ origin: process.env.CLIENT_ORIGIN, credentials: true }));
+// ---- CORS ----
+// If you set CLIENT_ORIGIN env var, the server will allow that origin and enable credentials.
+// If you don't set it, using origin: true lets the cors middleware reflect the request origin.
+const CLIENT_ORIGIN = process.env.CLIENT_ORIGIN || "";
+if (CLIENT_ORIGIN) {
+  app.use(cors({ origin: CLIENT_ORIGIN, credentials: true }));
 } else {
   app.use(cors({ origin: true, credentials: true }));
 }
 
-// ----- Static & uploads -----
+// ---- Static & uploads ----
 app.use(express.static(__dirname));
 const uploadsDir = path.join(__dirname, "uploads");
 if (!fs.existsSync(uploadsDir)) fs.mkdirSync(uploadsDir, { recursive: true });
 app.use("/uploads", express.static(uploadsDir));
 
-// ----- MongoDB -----
+// ---- MongoDB ----
 const MONGODB_URI = process.env.MONGODB_URI || "mongodb://localhost:27017/chatdb";
 mongoose.connect(MONGODB_URI, { autoIndex: true })
   .then(() => console.log("✅ MongoDB connecté"))
   .catch(err => console.error("MongoDB error:", err));
 
-// ----- Schemas & Models -----
+// ---- Schemas ----
 const userSchema = new mongoose.Schema({
   username: { type: String, required: true, unique: true, index: true },
   email: { type: String },
@@ -83,7 +86,7 @@ const messageSchema = new mongoose.Schema({
 const User = mongoose.model("User", userSchema);
 const Message = mongoose.model("Message", messageSchema);
 
-// ----- Auth helpers -----
+// ---- Auth helpers ----
 const JWT_SECRET = process.env.JWT_SECRET || "dev_secret_change_me";
 function signToken(user) {
   return jwt.sign({ id: user._id, username: user.username }, JWT_SECRET, { expiresIn: "30d" });
@@ -99,15 +102,26 @@ function authMiddleware(req, res, next) {
   }
 }
 
+// ---- cookie options (adaptive) ----
 const isProd = process.env.NODE_ENV === "production";
+
+// If CLIENT_ORIGIN is set (front and back are on different origins), we must use sameSite: 'none' and secure: true
+// Note: sameSite='none' requires secure=true (i.e. HTTPS). If you run locally without HTTPS, DON'T set CLIENT_ORIGIN.
 const cookieOptions = {
   httpOnly: true,
-  sameSite: "lax",
-  secure: isProd,
+  sameSite: CLIENT_ORIGIN ? "none" : "lax",
+  secure: CLIENT_ORIGIN ? true : isProd, // if cross-origin, force secure=true (must be HTTPS)
+  path: "/",
   maxAge: 1000 * 60 * 60 * 24 * 30
 };
 
-// ----- Auth routes -----
+// trust proxy when deployed behind a proxy so secure cookies work
+if (isProd || process.env.TRUST_PROXY === "1") {
+  app.set("trust proxy", 1);
+  console.log("trust proxy enabled");
+}
+
+// ---- Auth routes ----
 app.post("/api/register", async (req, res) => {
   try {
     const { username, email, password, filiere, niveau } = req.body;
@@ -127,6 +141,9 @@ app.post("/api/register", async (req, res) => {
     });
 
     const token = signToken(user);
+    // debug log:
+    console.log("register -> set cookie for", user.username, "cookieOptions:", { sameSite: cookieOptions.sameSite, secure: cookieOptions.secure });
+
     res.cookie("token", token, cookieOptions);
     res.json({ ok: true, username: user.username });
   } catch (e) {
@@ -147,6 +164,8 @@ app.post("/api/login", async (req, res) => {
     if (!match) return res.status(401).json({ error: "Identifiants invalides" });
 
     const token = signToken(user);
+    console.log("login -> set cookie for", user.username, "cookieOptions:", { sameSite: cookieOptions.sameSite, secure: cookieOptions.secure });
+
     res.cookie("token", token, cookieOptions);
     res.json({ ok: true, username: user.username });
   } catch (e) {
@@ -166,7 +185,12 @@ app.get("/api/me", authMiddleware, async (req, res) => {
   }
 });
 
-// ----- Upload config -----
+// debug route to check if cookie arrives
+app.get("/debug-auth", (req, res) => {
+  res.json({ hasToken: !!req.cookies?.token, cookies: req.cookies || {} });
+});
+
+// ---- Upload config ----
 const MAX_MB = parseInt(process.env.MAX_UPLOAD_MB || "10", 10);
 const storage = multer.diskStorage({
   destination: (_req, _file, cb) => cb(null, uploadsDir),
@@ -204,16 +228,15 @@ app.post("/api/upload", authMiddleware, upload.single("file"), async (req, res) 
   }
 });
 
-// ----- Serve index.html -----
+// Serve index
 app.get("/", (_req, res) => {
   res.sendFile(path.join(__dirname, "index.html"));
 });
 
-// ----- Socket.IO -----
+// ---- Socket.IO (identique) ----
 const onlineUsers = new Map();
 const lastMessageTime = new Map();
 
-// parse token from cookie on socket handshake (non-blocking)
 io.use((socket, next) => {
   try {
     const cookie = socket.request.headers.cookie || "";
@@ -224,8 +247,6 @@ io.use((socket, next) => {
     socket.user = { id: payload.id, username: payload.username };
     return next();
   } catch (e) {
-    // don't block; treat as anonymous
-    console.warn("Socket auth: token invalid or absent");
     return next();
   }
 });
@@ -242,6 +263,23 @@ io.on("connection", (socket) => {
     });
     io.to(room).emit("userList", clients);
   }
+
+  socket.on("joinRoom", async ({ username, room }) => {
+    try {
+      const cleanRoom = xss(String(room || "Général"));
+      const cleanUser = xss(String(username || (socket.user?.username || "Anonyme")));
+      socket.join(cleanRoom);
+      socket.currentRoom = cleanRoom;
+
+      const history = await Message.find({ room: cleanRoom }).sort({ createdAt: -1 }).limit(50).lean();
+      socket.emit("history", history.reverse());
+
+      socket.to(cleanRoom).emit("notification", `${cleanUser} a rejoint le salon`);
+      broadcastUserList(cleanRoom);
+    } catch (e) {
+      console.error("joinRoom error:", e);
+    }
+  });
 
   async function handleMessage(data) {
     try {
@@ -299,30 +337,10 @@ io.on("connection", (socket) => {
     }
   }
 
-  // join room
-  socket.on("joinRoom", async ({ username, room }) => {
-    try {
-      const cleanRoom = xss(String(room || "Général"));
-      const cleanUser = xss(String(username || (socket.user?.username || "Anonyme")));
-      socket.join(cleanRoom);
-      socket.currentRoom = cleanRoom;
-
-      const history = await Message.find({ room: cleanRoom }).sort({ createdAt: -1 }).limit(50).lean();
-      socket.emit("history", history.reverse());
-
-      socket.to(cleanRoom).emit("notification", `${cleanUser} a rejoint le salon`);
-      broadcastUserList(cleanRoom);
-    } catch (e) {
-      console.error("joinRoom error:", e);
-    }
-  });
-
-  // main message handlers (supports both names for compatibility)
   socket.on("message", handleMessage);
-  socket.on("chatMessage", handleMessage); // rétro-compatibilité
-
+  socket.on("chatMessage", handleMessage);
   socket.on("react", handleReact);
-  socket.on("reaction", handleReact); // rétro-compatibilité
+  socket.on("reaction", handleReact);
 
   socket.on("disconnect", () => {
     console.log("socket disconnected:", socket.id);
@@ -336,7 +354,7 @@ io.on("connection", (socket) => {
   });
 });
 
-// ----- Start server -----
+// ---- Start server ----
 const PORT = process.env.PORT || 3000;
 server.listen(PORT, () => {
   console.log(`✅ Serveur lancé sur http://localhost:${PORT}`);
