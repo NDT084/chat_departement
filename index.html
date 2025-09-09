@@ -31,31 +31,12 @@
       font-family: "Segoe UI", Tahoma, Geneva, Verdana, sans-serif;
       height: 100vh;
       display: flex;
-      flex-direction: column;
+      justify-content: center;
+      align-items: stretch;
       background: var(--bg);
       color: var(--text);
     }
-
-    /* Header principal */
-    header {
-      background: var(--secondary);
-      color: white;
-      padding: 14px 20px;
-      font-size: 18px;
-      font-weight: bold;
-      text-align: center;
-      border-bottom: 2px solid var(--primary);
-      box-shadow: 0 2px 6px rgba(0,0,0,0.2);
-      z-index: 2;
-    }
-
-    #container {
-      flex: 1;
-      display: flex;
-      width: 100%;
-      height: 100%;
-      background: var(--white);
-    }
+    #container { display: flex; width: 100%; height: 100%; background: var(--white); }
 
     /* Sidebars */
     #rooms {
@@ -144,9 +125,6 @@
   </style>
 </head>
 <body>
-  <!-- Nouveau header -->
-  <header>💬 Chat Département</header>
-
   <div id="container">
     <!-- Salons -->
     <div id="rooms">
@@ -209,7 +187,7 @@
   <!-- Login / Register -->
   <div id="login">
     <div id="loginBox">
-      <h2>Connexion / Inscription </h2>
+      <h2>Connexion / Inscription 🚀</h2>
       <input id="l_username" placeholder="Pseudo (unique)" />
       <input id="l_email" placeholder="Email (optionnel)" />
       <input id="l_password" type="password" placeholder="Mot de passe" />
@@ -253,24 +231,13 @@
       document.documentElement.setAttribute("data-theme", cur === "dark" ? "light" : "dark");
     }
 
-   async function register() {
-  const body = collectAuthData();
-  const r = await fetch("/api/register", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(body),
-    credentials: "include"   // 
-  });
-  const data = await r.json();
-
-  if (data.ok) {
-    document.getElementById("auth").style.display = "none";  
-    document.getElementById("chat").style.display = "block"; 
-  } else {
-    alert(data.error || "Erreur d'inscription");
-  }
-}
-
+    async function register() {
+      const body = collectAuthData();
+      const r = await fetch("/api/register", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body)
+      });
       const json = await r.json();
       if (!r.ok) return showAuthError(json.error || "Erreur");
       currentUser = json.username;
