@@ -26,12 +26,12 @@ const io = new Server(server, {
   }
 });
 
-// ----- Security middlewares -----
+// ----- Security & middlewares -----
 app.use(helmet());
 app.use(express.json({ limit: "1mb" }));
 app.use(cookieParser());
 
-// ----- Rate limiter -----
+// rate limiter
 const apiLimiter = rateLimit({
   windowMs: 60 * 1000,
   max: 100,
@@ -40,14 +40,14 @@ const apiLimiter = rateLimit({
 });
 app.use(apiLimiter);
 
-// ----- CORS -----
+// CORS
 if (process.env.CLIENT_ORIGIN) {
   app.use(cors({ origin: process.env.CLIENT_ORIGIN, credentials: true }));
 } else {
   app.use(cors({ origin: true, credentials: true }));
 }
 
-// ----- Static files -----
+// ----- Static & uploads -----
 app.use(express.static(__dirname));
 const uploadsDir = path.join(__dirname, "uploads");
 if (!fs.existsSync(uploadsDir)) fs.mkdirSync(uploadsDir, { recursive: true });
@@ -59,7 +59,7 @@ mongoose.connect(MONGODB_URI, { autoIndex: true })
   .then(() => console.log("✅ MongoDB connecté"))
   .catch(err => console.error("MongoDB error:", err));
 
-// ----- Schemas -----
+// ----- Schemas & Models -----
 const userSchema = new mongoose.Schema({
   username: { type: String, required: true, unique: true, index: true },
   email: { type: String },
@@ -130,7 +130,7 @@ app.post("/api/register", async (req, res) => {
     res.cookie("token", token, cookieOptions);
     res.json({ ok: true, username: user.username });
   } catch (e) {
-    console.error(e);
+    console.error("register error:", e);
     res.status(500).json({ error: "Erreur serveur" });
   }
 });
@@ -150,7 +150,7 @@ app.post("/api/login", async (req, res) => {
     res.cookie("token", token, cookieOptions);
     res.json({ ok: true, username: user.username });
   } catch (e) {
-    console.error(e);
+    console.error("login error:", e);
     res.status(500).json({ error: "Erreur serveur" });
   }
 });
@@ -161,7 +161,7 @@ app.get("/api/me", authMiddleware, async (req, res) => {
     if (!user) return res.status(404).json({ error: "Not found" });
     res.json({ username: user.username, filiere: user.filiere, niveau: user.niveau });
   } catch (e) {
-    console.error(e);
+    console.error("api/me error:", e);
     res.status(500).json({ error: "Erreur serveur" });
   }
 });
@@ -199,7 +199,7 @@ app.post("/api/upload", authMiddleware, upload.single("file"), async (req, res) 
     const url = `/uploads/${file.filename}`;
     res.json({ url, name: file.originalname });
   } catch (e) {
-    console.error(e);
+    console.error("upload error:", e);
     res.status(500).json({ error: "Erreur upload" });
   }
 });
@@ -213,6 +213,7 @@ app.get("/", (_req, res) => {
 const onlineUsers = new Map();
 const lastMessageTime = new Map();
 
+// parse token from cookie on socket handshake (non-blocking)
 io.use((socket, next) => {
   try {
     const cookie = socket.request.headers.cookie || "";
@@ -222,15 +223,16 @@ io.use((socket, next) => {
     const payload = jwt.verify(token, JWT_SECRET);
     socket.user = { id: payload.id, username: payload.username };
     return next();
-  } catch {
+  } catch (e) {
+    // don't block; treat as anonymous
+    console.warn("Socket auth: token invalid or absent");
     return next();
   }
 });
 
 io.on("connection", (socket) => {
-  if (socket.user?.username) {
-    onlineUsers.set(socket.id, socket.user.username);
-  }
+  console.log("socket connected:", socket.id, socket.user?.username || "(anon)");
+  if (socket.user?.username) onlineUsers.set(socket.id, socket.user.username);
 
   function broadcastUserList(room) {
     const sids = io.sockets.adapter.rooms.get(room) || new Set();
@@ -241,24 +243,7 @@ io.on("connection", (socket) => {
     io.to(room).emit("userList", clients);
   }
 
-  socket.on("joinRoom", async ({ username, room }) => {
-    try {
-      const cleanRoom = xss(String(room || "Général"));
-      const cleanUser = xss(String(username || (socket.user?.username || "Anonyme")));
-      socket.join(cleanRoom);
-      socket.currentRoom = cleanRoom;
-
-      const history = await Message.find({ room: cleanRoom }).sort({ createdAt: -1 }).limit(50).lean();
-      socket.emit("history", history.reverse());
-
-      socket.to(cleanRoom).emit("notification", `${cleanUser} a rejoint le salon`);
-      broadcastUserList(cleanRoom);
-    } catch (e) {
-      console.error("joinRoom error:", e);
-    }
-  });
-
-  socket.on("message", async (data) => {
+  async function handleMessage(data) {
     try {
       const now = Date.now();
       const last = lastMessageTime.get(socket.id) || 0;
@@ -292,15 +277,15 @@ io.on("connection", (socket) => {
         type: doc.type,
         fileUrl: doc.fileUrl,
         fileName: doc.fileName,
-        reactions: {},
+        reactions: Object.fromEntries(doc.reactions || []),
         createdAt: doc.createdAt
       });
     } catch (e) {
       console.error("message error:", e);
     }
-  });
+  }
 
-  socket.on("react", async ({ messageId, emoji, room }) => {
+  async function handleReact({ messageId, emoji, room }) {
     try {
       if (!messageId || !emoji) return;
       const msg = await Message.findById(messageId);
@@ -312,9 +297,35 @@ io.on("connection", (socket) => {
     } catch (e) {
       console.error("react error:", e);
     }
+  }
+
+  // join room
+  socket.on("joinRoom", async ({ username, room }) => {
+    try {
+      const cleanRoom = xss(String(room || "Général"));
+      const cleanUser = xss(String(username || (socket.user?.username || "Anonyme")));
+      socket.join(cleanRoom);
+      socket.currentRoom = cleanRoom;
+
+      const history = await Message.find({ room: cleanRoom }).sort({ createdAt: -1 }).limit(50).lean();
+      socket.emit("history", history.reverse());
+
+      socket.to(cleanRoom).emit("notification", `${cleanUser} a rejoint le salon`);
+      broadcastUserList(cleanRoom);
+    } catch (e) {
+      console.error("joinRoom error:", e);
+    }
   });
 
+  // main message handlers (supports both names for compatibility)
+  socket.on("message", handleMessage);
+  socket.on("chatMessage", handleMessage); // rétro-compatibilité
+
+  socket.on("react", handleReact);
+  socket.on("reaction", handleReact); // rétro-compatibilité
+
   socket.on("disconnect", () => {
+    console.log("socket disconnected:", socket.id);
     const username = onlineUsers.get(socket.id);
     const room = socket.currentRoom;
     onlineUsers.delete(socket.id);
