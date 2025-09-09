@@ -21,12 +21,12 @@ const server = http.createServer(app);
 
 const io = new Server(server, {
   cors: {
-    origin: process.env.CLIENT_ORIGIN || true, // en prod : mettre l'URL front (ex: https://mon-site.com)
+    origin: process.env.CLIENT_ORIGIN || true,
     credentials: true
   }
 });
 
-// ----- Basic security middlewares -----
+// ----- Security middlewares -----
 app.use(helmet());
 app.use(express.json({ limit: "1mb" }));
 app.use(cookieParser());
@@ -40,16 +40,14 @@ const apiLimiter = rateLimit({
 });
 app.use(apiLimiter);
 
-// ----- CORS (si besoin côté API) -----
+// ----- CORS -----
 if (process.env.CLIENT_ORIGIN) {
   app.use(cors({ origin: process.env.CLIENT_ORIGIN, credentials: true }));
 } else {
-  // fallback permissive for dev
   app.use(cors({ origin: true, credentials: true }));
 }
 
 // ----- Static files -----
-// expose current dir for index.html and /uploads for uploaded files
 app.use(express.static(__dirname));
 const uploadsDir = path.join(__dirname, "uploads");
 if (!fs.existsSync(uploadsDir)) fs.mkdirSync(uploadsDir, { recursive: true });
@@ -61,25 +59,25 @@ mongoose.connect(MONGODB_URI, { autoIndex: true })
   .then(() => console.log("✅ MongoDB connecté"))
   .catch(err => console.error("MongoDB error:", err));
 
-// ----- Schemas & Models -----
+// ----- Schemas -----
 const userSchema = new mongoose.Schema({
   username: { type: String, required: true, unique: true, index: true },
-  email:    { type: String },
+  email: { type: String },
   passwordHash: { type: String, required: true },
-  filiere:  { type: String, enum: ["CS", "SEMI", "RT", null], default: null },
-  niveau:   { type: String, enum: ["L1","L2","L3","M1","M2", null], default: null },
-  createdAt:{ type: Date, default: Date.now }
+  filiere: { type: String, enum: ["CS", "SEMI", "RT", null], default: null },
+  niveau: { type: String, enum: ["L1", "L2", "L3", "M1", "M2", null], default: null },
+  createdAt: { type: Date, default: Date.now }
 });
 
 const messageSchema = new mongoose.Schema({
-  room:     { type: String, index: true },
-  user:     { type: String },
-  text:     { type: String },
-  type:     { type: String, enum: ["text","image","file"], default: "text" },
-  fileUrl:  { type: String, default: null },
+  room: { type: String, index: true },
+  user: { type: String },
+  text: { type: String },
+  type: { type: String, enum: ["text", "image", "file"], default: "text" },
+  fileUrl: { type: String, default: null },
   fileName: { type: String, default: null },
-  reactions:{ type: Map, of: Number, default: {} },
-  createdAt:{ type: Date, default: Date.now }
+  reactions: { type: Map, of: Number, default: {} },
+  createdAt: { type: Date, default: Date.now }
 });
 
 const User = mongoose.model("User", userSchema);
@@ -101,7 +99,6 @@ function authMiddleware(req, res, next) {
   }
 }
 
-// cookie options (secure only in production)
 const isProd = process.env.NODE_ENV === "production";
 const cookieOptions = {
   httpOnly: true,
@@ -169,7 +166,7 @@ app.get("/api/me", authMiddleware, async (req, res) => {
   }
 });
 
-// ----- Upload config (multer) -----
+// ----- Upload config -----
 const MAX_MB = parseInt(process.env.MAX_UPLOAD_MB || "10", 10);
 const storage = multer.diskStorage({
   destination: (_req, _file, cb) => cb(null, uploadsDir),
@@ -179,8 +176,6 @@ const storage = multer.diskStorage({
     cb(null, `${id}${ext}`);
   }
 });
-
-// restrict file types: images + pdf + common docs (optional)
 function fileFilter(_req, file, cb) {
   const allowed = [
     "image/png", "image/jpg", "image/jpeg", "image/gif", "image/webp",
@@ -191,7 +186,6 @@ function fileFilter(_req, file, cb) {
   if (allowed.includes(file.mimetype)) cb(null, true);
   else cb(new Error("Type de fichier non autorisé"), false);
 }
-
 const upload = multer({
   storage,
   limits: { fileSize: MAX_MB * 1024 * 1024 },
@@ -210,17 +204,15 @@ app.post("/api/upload", authMiddleware, upload.single("file"), async (req, res) 
   }
 });
 
-// ----- Serve index ----- 
+// ----- Serve index.html -----
 app.get("/", (_req, res) => {
   res.sendFile(path.join(__dirname, "index.html"));
 });
 
 // ----- Socket.IO -----
-// Keep track of presence and anti-spam
-const onlineUsers = new Map(); // socket.id -> username
-const lastMessageTime = new Map(); // socket.id -> timestamp
+const onlineUsers = new Map();
+const lastMessageTime = new Map();
 
-// Socket auth from cookie (non-blocking: allow anonymous browsing)
 io.use((socket, next) => {
   try {
     const cookie = socket.request.headers.cookie || "";
@@ -230,8 +222,7 @@ io.use((socket, next) => {
     const payload = jwt.verify(token, JWT_SECRET);
     socket.user = { id: payload.id, username: payload.username };
     return next();
-  } catch (e) {
-    // don't block connection; treat as anonymous
+  } catch {
     return next();
   }
 });
@@ -241,7 +232,6 @@ io.on("connection", (socket) => {
     onlineUsers.set(socket.id, socket.user.username);
   }
 
-  // Helper to broadcast user list for a room
   function broadcastUserList(room) {
     const sids = io.sockets.adapter.rooms.get(room) || new Set();
     const clients = Array.from(sids).map(id => {
@@ -258,7 +248,6 @@ io.on("connection", (socket) => {
       socket.join(cleanRoom);
       socket.currentRoom = cleanRoom;
 
-      // last 50 messages
       const history = await Message.find({ room: cleanRoom }).sort({ createdAt: -1 }).limit(50).lean();
       socket.emit("history", history.reverse());
 
@@ -271,7 +260,6 @@ io.on("connection", (socket) => {
 
   socket.on("message", async (data) => {
     try {
-      // anti-spam (2s)
       const now = Date.now();
       const last = lastMessageTime.get(socket.id) || 0;
       if (now - last < 2000) {
@@ -337,7 +325,7 @@ io.on("connection", (socket) => {
   });
 });
 
-// ----- Launch server -----
+// ----- Start server -----
 const PORT = process.env.PORT || 3000;
 server.listen(PORT, () => {
   console.log(`✅ Serveur lancé sur http://localhost:${PORT}`);
